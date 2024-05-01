@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"encoding/binary"
 	"log"
 	"math/rand"
@@ -16,7 +15,7 @@ const (
 
 type TrackerClient struct {
 	conn           *net.UDPConn
-	connectionID   int64
+	connectionID   uint64
 	connectedSince *time.Time
 }
 
@@ -47,55 +46,49 @@ func NewTrackerClient(host string) TrackerClient {
 	}
 }
 
-func (t *TrackerClient) connect() {
+func (t *TrackerClient) connect() error {
 	if t.connectedSince != nil && time.Since(*t.connectedSince).Seconds() < 60 {
-		return // already connected. According to spec, this is reusable for a minute
+		return nil // already connected. According to spec, this is reusable for a minute
 	}
 	connectRequest := NewConnectRequest()
-	// Send the connect request
 	if _, err := t.conn.Write(connectRequest.raw); err != nil {
 		log.Fatalf("Failed to send connect request: %v", err)
 	}
-
-	// Receive the response
-	response := make([]byte, 16) // Expected response size
-	n, err := t.conn.Read(response)
+	response, err := t.read(16, uint32(connectRequest.transactionId))
 	if err != nil {
-		log.Fatalf("Failed to receive response: %v", err)
+		return err
 	}
-	if n < 16 {
-		log.Fatalf("Response too short")
-	}
-
-	// Parse response
-	respBuffer := bytes.NewReader(response)
-
-	var recvAction, recvTransactionID int32
-	var connectionID int64
-
-	if err := binary.Read(respBuffer, binary.BigEndian, &recvAction); err != nil {
-		log.Fatalf("Failed to read action from response: %v", err)
-	}
-	if recvAction != actionConnect {
-		log.Fatalf("Unexpected action in response: %d", recvAction)
-	}
-
-	if err := binary.Read(respBuffer, binary.BigEndian, &recvTransactionID); err != nil {
-		log.Fatalf("Failed to read transaction ID from response: %v", err)
-	}
-	if recvTransactionID != connectRequest.transactionId {
-		log.Fatalf("Transaction ID mismatch")
-	}
-
-	if err := binary.Read(respBuffer, binary.BigEndian, &connectionID); err != nil {
-		log.Fatalf("Failed to read connection ID from response: %v", err)
-	}
-
+	connectionID := binary.BigEndian.Uint64(response[8:])
 	log.Printf("Received connection ID: %d\n", connectionID)
 	t.connectionID = connectionID
 	now := time.Now()
 	t.connectedSince = &now
+	return nil
+}
 
+func (t *TrackerClient) read(expectedSize int, expectedTransactionID uint32) ([]byte, error) {
+	response := make([]byte, expectedSize) // Expected response size
+	n, err := t.conn.Read(response)
+	if err != nil {
+		log.Fatalf("Failed to receive response: %v", err)
+		return nil, err
+	}
+	if n < expectedSize {
+		log.Fatalf("Response too short")
+	}
+
+	recvAction := binary.BigEndian.Uint32(response[0:])
+	recvTransactionID := binary.BigEndian.Uint32(response[4:])
+	// Parse response
+	if recvAction != actionConnect {
+		log.Fatalf("Unexpected action in response: %d", recvAction)
+	}
+
+	if recvTransactionID != expectedTransactionID {
+		log.Fatalf("Transaction ID mismatch")
+	}
+
+	return response, nil
 }
 
 func (t *TrackerClient) close() error {
