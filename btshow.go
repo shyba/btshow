@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/binary"
+	"fmt"
 	"log"
 	"math/rand"
 	"net"
@@ -78,8 +79,7 @@ func (t *TrackerClient) read(request *Request) ([]byte, error) {
 	response := make([]byte, expectedSize) // Expected response size
 	n, err := t.conn.Read(response)
 	if err != nil {
-		log.Fatalf("Failed to receive response: %v", err)
-		return nil, err
+		return nil, fmt.Errorf("failed to receive response: %v", err)
 	}
 	if n < expectedSize {
 		log.Fatalf("Response too short")
@@ -88,12 +88,15 @@ func (t *TrackerClient) read(request *Request) ([]byte, error) {
 	recvAction := binary.BigEndian.Uint32(response[0:])
 	recvTransactionID := binary.BigEndian.Uint32(response[4:])
 	// Parse response
+	if recvAction == actionError {
+		return nil, fmt.Errorf("received error: %s", response[8:])
+	}
 	if recvAction != request.action {
-		log.Fatalf("Unexpected action in response: %d (wanted %d)", recvAction, request.action)
+		return nil, fmt.Errorf("unexpected action in response: %d (wanted %d)", recvAction, request.action)
 	}
 
 	if recvTransactionID != request.transactionId {
-		log.Fatalf("Transaction ID mismatch")
+		return nil, fmt.Errorf("transaction ID mismatch")
 	}
 
 	return response, nil
@@ -135,5 +138,8 @@ func main() {
 	client := NewTrackerClient("epider.me:6969")
 	defer client.close()
 
-	client.connect()
+	err := client.connect()
+	if err != nil {
+		panic(err)
+	}
 }
