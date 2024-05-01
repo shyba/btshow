@@ -7,6 +7,7 @@ import (
 	"log"
 	"math/rand"
 	"net"
+	"os"
 	"time"
 )
 
@@ -164,7 +165,7 @@ func NewScrapeRequest(connectionID uint64, infohashes ...InfoHash) *Request {
 	binary.BigEndian.PutUint32(buf[8:], actionScrape)
 	binary.BigEndian.PutUint32(buf[12:], transactionID)
 	for idx, infohash := range infohashes {
-		copy(buf[(idx+16):], infohash[:])
+		copy(buf[(idx*20+16):], infohash[:])
 	}
 
 	return &Request{transactionId: transactionID, raw: buf, action: actionScrape}
@@ -190,10 +191,20 @@ func printInfohashResponse(response ScrapeResponse) {
 }
 
 func main() {
-	client := NewTrackerClient("epider.me:6969")
+	if len(os.Args) < 3 {
+		println("Usage: btshow <host> {<infohash>,...}+")
+		return
+	}
+	client := NewTrackerClient(os.Args[1])
 	defer client.close()
 
-	resp, err := client.scrape(parseInfohash("2aa4f5a7e209e54b32803d43670971c4c8caaa05"))
+	args := os.Args[2:]
+	infohashes := make([]InfoHash, len(args))
+	for idx, arg := range args {
+		infohashes[idx] = parseInfohash(arg)
+	}
+
+	resp, err := client.scrape(infohashes...)
 	printInfohashResponse(resp)
 	if err != nil {
 		panic(err)
