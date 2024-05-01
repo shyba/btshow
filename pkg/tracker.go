@@ -1,13 +1,11 @@
-package main
+package pkg
 
 import (
 	"encoding/binary"
-	"encoding/hex"
 	"fmt"
 	"log"
 	"math/rand"
 	"net"
-	"os"
 	"time"
 )
 
@@ -33,9 +31,9 @@ type Request struct {
 }
 
 type InfohashStat struct {
-	seeders   uint32
-	completed uint32
-	leechers  uint32
+	Seeders   uint32
+	Completed uint32
+	Leechers  uint32
 }
 
 type ScrapeResponse = map[InfoHash]InfohashStat
@@ -67,14 +65,13 @@ func (t *TrackerClient) connect() error {
 		return err
 	}
 	connectionID := binary.BigEndian.Uint64(response[8:])
-	log.Printf("Received connection ID: %d\n", connectionID)
 	t.connectionID = connectionID
 	now := time.Now()
 	t.connectedSince = &now
 	return nil
 }
 
-func (t *TrackerClient) scrape(infohashes ...InfoHash) (ScrapeResponse, error) {
+func (t *TrackerClient) Scrape(infohashes ...InfoHash) (ScrapeResponse, error) {
 	if err := t.connect(); err != nil {
 		return nil, err
 	}
@@ -86,9 +83,9 @@ func (t *TrackerClient) scrape(infohashes ...InfoHash) (ScrapeResponse, error) {
 	scrapeResponse := make(ScrapeResponse)
 	for idx, infohash := range infohashes {
 		scrapeResponse[infohash] = InfohashStat{
-			seeders:   binary.BigEndian.Uint32(responseBytes[8+idx*12:]),
-			completed: binary.BigEndian.Uint32(responseBytes[8+idx*12+8:]),
-			leechers:  binary.BigEndian.Uint32(responseBytes[8+idx*12+4:]),
+			Seeders:   binary.BigEndian.Uint32(responseBytes[8+idx*12:]),
+			Completed: binary.BigEndian.Uint32(responseBytes[8+idx*12+8:]),
+			Leechers:  binary.BigEndian.Uint32(responseBytes[8+idx*12+4:]),
 		}
 	}
 
@@ -140,7 +137,7 @@ func (t *TrackerClient) read(request *Request) ([]byte, error) {
 	return response, nil
 }
 
-func (t *TrackerClient) close() error {
+func (t *TrackerClient) Close() error {
 	return t.conn.Close()
 }
 
@@ -170,43 +167,4 @@ func NewScrapeRequest(connectionID uint64, infohashes ...InfoHash) *Request {
 
 	return &Request{transactionId: transactionID, raw: buf, action: actionScrape}
 
-}
-
-func parseInfohash(infohash string) InfoHash {
-	val, err := hex.DecodeString(infohash)
-	if err != nil {
-		panic(err)
-	}
-	return InfoHash(val[0:20])
-}
-
-func printInfohashResponse(response ScrapeResponse) {
-	for infohash := range response {
-		fmt.Println(hex.EncodeToString(infohash[:]))
-		stat := response[infohash]
-		fmt.Printf("Completed: %d\n", stat.completed)
-		fmt.Printf("Leechers: %d\n", stat.leechers)
-		fmt.Printf("Seeders: %d\n", stat.seeders)
-	}
-}
-
-func main() {
-	if len(os.Args) < 3 {
-		println("Usage: btshow <host> {<infohash>,...}+")
-		return
-	}
-	client := NewTrackerClient(os.Args[1])
-	defer client.close()
-
-	args := os.Args[2:]
-	infohashes := make([]InfoHash, len(args))
-	for idx, arg := range args {
-		infohashes[idx] = parseInfohash(arg)
-	}
-
-	resp, err := client.scrape(infohashes...)
-	printInfohashResponse(resp)
-	if err != nil {
-		panic(err)
-	}
 }
