@@ -115,6 +115,22 @@ func NewConnectRequest() *Request {
 	return &Request{transactionId: transactionID, raw: buf, action: actionConnect}
 }
 
+func NewScrapeRequest(connectionID uint64, infohashes ...*InfoHash) *Request {
+	transactionID := rand.Uint32()
+	buf := make([]byte, 16+20*len(infohashes))
+
+	// Write protocol ID as a 64-bit integer
+	binary.BigEndian.PutUint64(buf[0:], connectionID)
+	binary.BigEndian.PutUint32(buf[8:], actionScrape)
+	binary.BigEndian.PutUint32(buf[12:], transactionID)
+	for idx, infohash := range infohashes {
+		copy(buf[(idx+16):], infohash[:])
+	}
+
+	return &Request{transactionId: transactionID, raw: buf, action: actionScrape}
+
+}
+
 func main() {
 	client := NewTrackerClient("epider.me:6969")
 	defer client.close()
