@@ -15,14 +15,17 @@ const (
 	actionError   = 3
 )
 
+type InfoHash = [20]byte
+
 type TrackerClient struct {
 	conn           *net.UDPConn
 	connectionID   uint64
 	connectedSince *time.Time
 }
 
-type ConnectRequest struct {
-	transactionId int32
+type Request struct {
+	transactionId uint32
+	action        uint32
 	raw           []byte
 }
 
@@ -52,7 +55,7 @@ func (t *TrackerClient) connect() error {
 	if _, err := t.conn.Write(connectRequest.raw); err != nil {
 		log.Fatalf("Failed to send connect request: %v", err)
 	}
-	response, err := t.read(16, uint32(connectRequest.transactionId), actionConnect)
+	response, err := t.read(connectRequest)
 	if err != nil {
 		return err
 	}
@@ -64,7 +67,14 @@ func (t *TrackerClient) connect() error {
 	return nil
 }
 
-func (t *TrackerClient) read(expectedSize int, expectedTransactionID uint32, expectedAction uint32) ([]byte, error) {
+func (t *TrackerClient) read(request *Request) ([]byte, error) {
+	var expectedSize int
+	switch request.action {
+	case actionConnect:
+		expectedSize = 16
+	default:
+		panic("invalid request value")
+	}
 	response := make([]byte, expectedSize) // Expected response size
 	n, err := t.conn.Read(response)
 	if err != nil {
@@ -78,11 +88,11 @@ func (t *TrackerClient) read(expectedSize int, expectedTransactionID uint32, exp
 	recvAction := binary.BigEndian.Uint32(response[0:])
 	recvTransactionID := binary.BigEndian.Uint32(response[4:])
 	// Parse response
-	if recvAction != expectedAction {
-		log.Fatalf("Unexpected action in response: %d (wanted %d)", recvAction, expectedAction)
+	if recvAction != request.action {
+		log.Fatalf("Unexpected action in response: %d (wanted %d)", recvAction, request.action)
 	}
 
-	if recvTransactionID != expectedTransactionID {
+	if recvTransactionID != request.transactionId {
 		log.Fatalf("Transaction ID mismatch")
 	}
 
@@ -93,16 +103,16 @@ func (t *TrackerClient) close() error {
 	return t.conn.Close()
 }
 
-func NewConnectRequest() *ConnectRequest {
-	transactionID := rand.Int31()
+func NewConnectRequest() *Request {
+	transactionID := rand.Uint32()
 	buf := make([]byte, 16)
 
 	// Write protocol ID as a 64-bit integer
 	binary.BigEndian.PutUint64(buf[0:], protocolID)
 	binary.BigEndian.PutUint32(buf[8:], actionConnect)
-	binary.BigEndian.PutUint32(buf[12:], uint32(transactionID))
+	binary.BigEndian.PutUint32(buf[12:], transactionID)
 
-	return &ConnectRequest{transactionId: transactionID, raw: buf}
+	return &Request{transactionId: transactionID, raw: buf, action: actionConnect}
 }
 
 func main() {
