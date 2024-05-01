@@ -9,8 +9,10 @@ import (
 )
 
 const (
-	protocolID    = 0x41727101980 // Magic constant
-	actionConnect = 0             // Connect action
+	protocolID    = 0x41727101980
+	actionConnect = 0
+	actionScrape  = 2
+	actionError   = 3
 )
 
 type TrackerClient struct {
@@ -22,10 +24,6 @@ type TrackerClient struct {
 type ConnectRequest struct {
 	transactionId int32
 	raw           []byte
-}
-
-func generateTransactionID() int32 {
-	return rand.Int31()
 }
 
 func NewTrackerClient(host string) TrackerClient {
@@ -54,7 +52,7 @@ func (t *TrackerClient) connect() error {
 	if _, err := t.conn.Write(connectRequest.raw); err != nil {
 		log.Fatalf("Failed to send connect request: %v", err)
 	}
-	response, err := t.read(16, uint32(connectRequest.transactionId))
+	response, err := t.read(16, uint32(connectRequest.transactionId), actionConnect)
 	if err != nil {
 		return err
 	}
@@ -66,7 +64,7 @@ func (t *TrackerClient) connect() error {
 	return nil
 }
 
-func (t *TrackerClient) read(expectedSize int, expectedTransactionID uint32) ([]byte, error) {
+func (t *TrackerClient) read(expectedSize int, expectedTransactionID uint32, expectedAction uint32) ([]byte, error) {
 	response := make([]byte, expectedSize) // Expected response size
 	n, err := t.conn.Read(response)
 	if err != nil {
@@ -80,8 +78,8 @@ func (t *TrackerClient) read(expectedSize int, expectedTransactionID uint32) ([]
 	recvAction := binary.BigEndian.Uint32(response[0:])
 	recvTransactionID := binary.BigEndian.Uint32(response[4:])
 	// Parse response
-	if recvAction != actionConnect {
-		log.Fatalf("Unexpected action in response: %d", recvAction)
+	if recvAction != expectedAction {
+		log.Fatalf("Unexpected action in response: %d (wanted %d)", recvAction, expectedAction)
 	}
 
 	if recvTransactionID != expectedTransactionID {
@@ -96,7 +94,7 @@ func (t *TrackerClient) close() error {
 }
 
 func NewConnectRequest() *ConnectRequest {
-	transactionID := generateTransactionID()
+	transactionID := rand.Int31()
 	buf := make([]byte, 16)
 
 	// Write protocol ID as a 64-bit integer
