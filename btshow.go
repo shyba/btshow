@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/binary"
+	"encoding/hex"
 	"fmt"
 	"log"
 	"math/rand"
@@ -30,6 +31,14 @@ type Request struct {
 	raw           []byte
 }
 
+type InfohashStat struct {
+	seeders   uint32
+	completed uint32
+	leechers  uint32
+}
+
+type ScrapeResponse = map[InfoHash]InfohashStat
+
 func NewTrackerClient(host string) TrackerClient {
 	trackerAddr, err := net.ResolveUDPAddr("udp", host)
 	if err != nil {
@@ -52,11 +61,7 @@ func (t *TrackerClient) connect() error {
 	if t.connectedSince != nil && time.Since(*t.connectedSince).Seconds() < 60 {
 		return nil // already connected. According to spec, this is reusable for a minute
 	}
-	connectRequest := NewConnectRequest()
-	if _, err := t.conn.Write(connectRequest.raw); err != nil {
-		log.Fatalf("Failed to send connect request: %v", err)
-	}
-	response, err := t.read(connectRequest)
+	response, err := t.sendRequest(NewConnectRequest())
 	if err != nil {
 		return err
 	}
@@ -68,11 +73,43 @@ func (t *TrackerClient) connect() error {
 	return nil
 }
 
+func (t *TrackerClient) scrape(infohashes ...InfoHash) (ScrapeResponse, error) {
+	if err := t.connect(); err != nil {
+		return nil, err
+	}
+	responseBytes, err := t.sendRequest(NewScrapeRequest(t.connectionID, infohashes...))
+	if err != nil {
+		return nil, err
+	}
+
+	scrapeResponse := make(ScrapeResponse)
+	for idx, infohash := range infohashes {
+		scrapeResponse[infohash] = InfohashStat{
+			seeders:   binary.BigEndian.Uint32(responseBytes[8+idx*12:]),
+			completed: binary.BigEndian.Uint32(responseBytes[8+idx*12+8:]),
+			leechers:  binary.BigEndian.Uint32(responseBytes[8+idx*12+4:]),
+		}
+	}
+
+	return scrapeResponse, nil
+}
+
+func (t *TrackerClient) sendRequest(request *Request) ([]byte, error) {
+	// todo: retry
+	if _, err := t.conn.Write(request.raw); err != nil {
+		log.Fatalf("Failed to send connect request: %v", err)
+	}
+	return t.read(request)
+}
+
 func (t *TrackerClient) read(request *Request) ([]byte, error) {
 	var expectedSize int
 	switch request.action {
 	case actionConnect:
 		expectedSize = 16
+	case actionScrape:
+		total := (len(request.raw) - 16) / 20
+		expectedSize = 8 + 12*total
 	default:
 		panic("invalid request value")
 	}
@@ -118,7 +155,7 @@ func NewConnectRequest() *Request {
 	return &Request{transactionId: transactionID, raw: buf, action: actionConnect}
 }
 
-func NewScrapeRequest(connectionID uint64, infohashes ...*InfoHash) *Request {
+func NewScrapeRequest(connectionID uint64, infohashes ...InfoHash) *Request {
 	transactionID := rand.Uint32()
 	buf := make([]byte, 16+20*len(infohashes))
 
@@ -134,11 +171,30 @@ func NewScrapeRequest(connectionID uint64, infohashes ...*InfoHash) *Request {
 
 }
 
+func parseInfohash(infohash string) InfoHash {
+	val, err := hex.DecodeString(infohash)
+	if err != nil {
+		panic(err)
+	}
+	return InfoHash(val[0:20])
+}
+
+func printInfohashResponse(response ScrapeResponse) {
+	for infohash := range response {
+		fmt.Println(hex.EncodeToString(infohash[:]))
+		stat := response[infohash]
+		fmt.Printf("Completed: %d\n", stat.completed)
+		fmt.Printf("Leechers: %d\n", stat.leechers)
+		fmt.Printf("Seeders: %d\n", stat.seeders)
+	}
+}
+
 func main() {
 	client := NewTrackerClient("epider.me:6969")
 	defer client.close()
 
-	err := client.connect()
+	resp, err := client.scrape(parseInfohash("2aa4f5a7e209e54b32803d43670971c4c8caaa05"))
+	printInfohashResponse(resp)
 	if err != nil {
 		panic(err)
 	}
